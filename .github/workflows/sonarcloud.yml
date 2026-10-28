@@ -29,4 +29,6 @@ jobs:
       - name: SonarCloud Scan
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: ./sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner -Dsonar.login=$SONAR_TOKEN
+        run: |
+          export PATH="$JAVA_HOME_17_X64/bin:$PATH"
+          ./sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner -Dsonar.login=$SONAR_TOKEN
