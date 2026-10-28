@@ -8,12 +8,13 @@ on:
 jobs:
   sonar:
     runs-on: ubuntu-latest
+    env:
+      JAVA_HOME: /opt/hostedtoolcache/Java/17.0.x/x64
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # SonarScanner 4.8.1 requiere JDK 17; el action oficial traía imagen con Java 11.
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -28,4 +29,11 @@ jobs:
       - name: SonarCloud Scan
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: ./sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner -Dsonar.sonarcloud.url=https://sonarcloud.io
+        run: ./sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner \
+          -Dsonar.projectKey=RDTmc_atlas-sg \
+          -Dsonar.projectName=Atlas-Sistema-Gestion \
+          -Dsonar.projectVersion=1.0.0 \
+          -Dsonar.sources=BACKEND/src,FRONTEND/src \
+          -Dsonar.hosturl=https://sonarcloud.io \
+          -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/*.spec.js,**/*.test.js \
+          -Dsonar.sourceEncoding=UTF-8
