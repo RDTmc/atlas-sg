@@ -9,7 +9,7 @@ jobs:
   sonar:
     runs-on: ubuntu-latest
     env:
-      JAVA_HOME: /opt/hostedtoolcache/Java/17.0.x/x64
+      JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.21-9/x64
     steps:
       - uses: actions/checkout@v4
         with:
