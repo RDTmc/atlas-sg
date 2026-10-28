@@ -29,11 +29,4 @@ jobs:
       - name: SonarCloud Scan
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: ./sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner \
-          -Dsonar.projectKey=RDTmc_atlas-sg \
-          -Dsonar.projectName=Atlas-Sistema-Gestion \
-          -Dsonar.projectVersion=1.0.0 \
-          -Dsonar.sources=BACKEND/src,FRONTEND/src \
-          -Dsonar.hosturl=https://sonarcloud.io \
-          -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/*.spec.js,**/*.test.js \
-          -Dsonar.sourceEncoding=UTF-8
+        run: ./sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner -Dsonar.hosturl=https://sonarcloud.io
