@@ -1,4 +1,4 @@
-name: Security & Quality Pipeline (SonarCloud + Tests + SAST + Secrets)
+name: Security & Quality Pipeline (Optimizado)
 
 on:
   push:
@@ -6,144 +6,264 @@ on:
   pull_request:
     branches: [ main ]
 
-jobs:
-  security-and-quality:
-    runs-on: ubuntu-latest
+# -----------------------------------------------------------
+# Variables de entorno globales
+# -----------------------------------------------------------
+env:
+  SONAR_PROJECT_KEY: RDTmc_atlas-sg
+  SONAR_ORGANIZATION: rodrigo-munoz-catalan
 
+# -----------------------------------------------------------
+# Job 0: Checkout + Instalación de dependencias (compartido)
+# -----------------------------------------------------------
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      node-version: '20'
     steps:
-      # -----------------------------------------------------------
-      # 1. Checkout del código
-      # -----------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Requerido por Gitleaks para revisar historial de commits
 
-      # -----------------------------------------------------------
-      # 2. Instalar Java 21 (requerido por SonarScanner)
-      # -----------------------------------------------------------
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Verify Java version
-        run: |
-          echo "JAVA_HOME=$JAVA_HOME"
-          which java
-          java -version
-
-      # -----------------------------------------------------------
-      # 3. Instalar Node.js (requerido por npm, Semgrep, Gitleaks, Jest)
-      # -----------------------------------------------------------
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # -----------------------------------------------------------
-      # 4. Instalar dependencias del backend
-      # -----------------------------------------------------------
       - name: Install backend dependencies
         working-directory: ./BACKEND
         run: npm ci
 
-      # -----------------------------------------------------------
-      # 5. npm audit — Vulnerabilidades en dependencias (SAST)
-      # -----------------------------------------------------------
-      - name: Run npm audit (dependency vulnerabilities)
+# -----------------------------------------------------------
+# Job 1: Seguridad rápida (Gitleaks + Semgrep + Trivy) — PARALELO
+# -----------------------------------------------------------
+  security-scan:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
         working-directory: ./BACKEND
-        run: |
-          npm audit --json --audit-level=moderate > npm-audit-results.json || true
-          npm audit --audit-level=moderate || true
-        continue-on-error: true
+        run: npm ci
 
-      # -----------------------------------------------------------
-      # 6. Semgrep — SAST adicional sobre código fuente
-      # -----------------------------------------------------------
-      - name: Install Semgrep
-        run: pip install semgrep
-
-      - name: Run Semgrep scan
-        run: |
-          semgrep --config auto --json --output semgrep-results.json . || true
-        continue-on-error: true
-
-      # -----------------------------------------------------------
-      # 7. Gitleaks — Detección de secretos hardcodeados
-      # -----------------------------------------------------------
+      # --- Gitleaks: secretos hardcodeados (historial completo) ---
       - name: Install Gitleaks
         run: |
           curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh -s -- -b /usr/local/bin
           gitleaks --version
 
       - name: Run Gitleaks secret detection
+        id: gitleaks
         run: |
           gitleaks detect --source . --report-format json --report-path gitleaks-results.json || true
+          echo "leaks_found=$(gitleaks detect --source . --report-format json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      # -----------------------------------------------------------
-      # 8. Ejecutar pruebas unitarias e integración (Jest + Supertest)
-      # -----------------------------------------------------------
-      - name: Run Jest unit and integration tests
+      # --- Semgrep: SAST rápido ---
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Run Semgrep scan
+        id: semgrep
+        run: |
+          semgrep --config auto --json --output semgrep-results.json . || true
+          echo "findings=$(semgrep --config auto --json . 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d[\"results\"]))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      # --- Trivy: SCA + contenedores + IaC (reemplaza npm audit) ---
+      - name: Install Trivy
+        run: |
+          apt-get update && apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/trivy.list
+          apt-get update && apt-get install -y trivy
+          trivy --version
+
+      - name: Run Trivy filesystem scan (dependencias Node.js)
+        id: trivy
+        run: |
+          trivy fs --format json --output trivy-results.json --skip-dirs node_modules . || true
+          echo "vulns=$(trivy fs --format json . 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Summary",{}).get("Vulnerabilities",0))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      # --- Publicar reportes de seguridad ---
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            gitleaks-results.json
+            semgrep-results.json
+            trivy-results.json
+          retention-days: 30
+
+      - name: Print security scan summary
+        run: |
+          echo "========================================"
+          echo "ESCANEO DE SEGURIDAD - RESUMEN"
+          echo "========================================"
+          echo "Gitleaks secretos: ${{ steps.gitleaks.outputs.leaks_found }}"
+          echo "Semgrep hallazgos: ${{ steps.semgrep.outputs.findings }}"
+          echo "Trivy vulnerabilidades: ${{ steps.trivy.outputs.vulns }}"
+          echo "========================================"
+
+# -----------------------------------------------------------
+# Job 2: Pruebas automatizadas (Jest + Supertest) — PARALELO
+# -----------------------------------------------------------
+  testing:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: ./BACKEND
+        run: npm ci
+
+      - name: Install test dependencies (Jest + Supertest)
+        working-directory: ./BACKEND
+        run: npm install --save-dev jest supertest
+
+      - name: Run Jest unit and integration tests with coverage
+        id: jest
         working-directory: ./BACKEND
         run: |
-          npm test -- --coverage --coverageReporters=text --coverageReporters=json --coverageReporters=html || true
+          npm test -- --coverage --coverageReporters=text --coverageReporters=json --coverageReporters=lcov || true
+          echo "coverage=$(grep -o '"total":.*' __tests__/coverage/coverage-final.json 2>/dev/null | grep -o '[0-9.]*' | head -1 || echo 0)" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      # -----------------------------------------------------------
-      # 9. SonarCloud Scan (SAST + Quality Gate)
-      # -----------------------------------------------------------
-      - name: Download SonarScanner
-        run: |
-          curl -fsSL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.8.1.3023-linux.zip -o sonar-scanner.zip
-          unzip -q sonar-scanner.zip
+      - name: Upload test coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-coverage
+          path: |
+            BACKEND/__tests__/coverage/
+          retention-days: 30
 
-      - name: SonarCloud Scan
+      - name: Print testing summary
+        run: |
+          echo "========================================"
+          echo "PRUEBAS AUTOMATIZADAS - RESUMEN"
+          echo "========================================"
+          echo "Cobertura de código: ${{ steps.jest.outputs.coverage }}%"
+          echo "Reportes: BACKEND/__tests__/coverage/lcov-report/index.html"
+          echo "========================================"
+
+# -----------------------------------------------------------
+# Job 3: Calidad y seguridad estática (SonarCloud) — PARALELO
+# Consume cobertura del Job 2 (testing)
+# -----------------------------------------------------------
+  sonarcloud:
+    needs: [setup, testing]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21 (requerido por SonarScanner)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # --- Usar imagen Docker oficial de SonarScanner (optimización de rendimiento) ---
+      - name: Run SonarCloud Scan (Docker official image)
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          sed -i 's/use_embedded_jre=true/use_embedded_jre=false/' sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner
-          ./sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner \
-            -Dsonar.login="$SONAR_TOKEN" \
-            -Dsonar.projectKey=RDTmc_atlas-sg \
-            -Dsonar.projectName=Atlas-Sistema-Gestion \
+          docker run \
+            --rm \
+            -e SONAR_TOKEN="$SONAR_TOKEN" \
+            -e SONAR_HOST_URL="https://sonarcloud.io" \
+            -v "${PWD}:/usr/src" \
+            -v "${HOME}/.sonar/cache:/root/.sonar/cache" \
+            sonarsource/sonar-scanner-cli:latest \
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }} \
+            -Dsonar.organization=${{ env.SONAR_ORGANIZATION }} \
+            -Dsonar.projectName="Atlas-Sistema-Gestion" \
             -Dsonar.projectVersion=1.0.0 \
             -Dsonar.sources=BACKEND/src,FRONTEND/src \
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/*.spec.js,**/*.test.js \
             -Dsonar.sourceEncoding=UTF-8 \
             -Dsonar.language=js \
             -Dsonar.typescript.lcov.reportPaths=BACKEND/__tests__/coverage/lcov.info \
-            -Dsonar.javascript.lcov.reportPaths=BACKEND/__tests__/coverage/lcov.info || true
+            -Dsonar.javascript.lcov.reportPaths=BACKEND/__tests__/coverage/lcov.info \
+            -Dsonar.cfamily.build-wrapper-output=bypass || true
         continue-on-error: true
 
-      # -----------------------------------------------------------
-      # 10. Publicar reportes como artifacts del workflow
-      # -----------------------------------------------------------
-      - name: Upload security and test reports as artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-and-test-reports
-          path: |
-            BACKEND/npm-audit-results.json
-            semgrep-results.json
-            gitleaks-results.json
-            BACKEND/__tests__/coverage/
-            sonar-scanner-4.8.1.3023-linux/
-          retention-days: 30
-
-      # -----------------------------------------------------------
-      # 11. Resumen de resultados del pipeline
-      # -----------------------------------------------------------
-      - name: Print pipeline summary
+      - name: Print SonarCloud summary
         run: |
           echo "========================================"
-          echo "PIPELINE DE SEGURIDAD Y CALIDAD - RESUMEN"
+          echo "SONARCLOUD - CALIDAD Y SEGURIDAD ESTÁTICA"
           echo "========================================"
-          echo "1. npm audit:   $(cat BACKEND/npm-audit-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"Vulnerabilidades: {d[\"metadata\"][\"vulnerabilities\"][\"total\"]} (Críticas: {d[\"metadata\"][\"vulnerabilities\"][\"critical\"]}, Altas: {d[\"metadata\"][\"vulnerabilities\"][\"high\"]}, Medias: {d[\"metadata\"][\"vulnerabilities\"][\"moderate\"]})")' 2>/dev/null || echo "Ver reporte npm-audit-results.json")"
-          echo "2. Semgrep:     $(cat semgrep-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"Hallazgos: {len(d[\"results\"])}")' 2>/dev/null || echo "Ver reporte semgrep-results.json")"
-          echo "3. Gitleaks:    $(cat gitleaks-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"Secretos encontrados: {len(d)}")' 2>/dev/null || echo "Ver reporte gitleaks-results.json")"
-          echo "4. Jest:        Ver BACKEND/__tests__/coverage/lcov-report/index.html"
-          echo "5. SonarCloud:  Ver https://sonarcloud.io/project/overview?id=RDTmc_atlas-sg"
+          echo "Proyecto: ${{ env.SONAR_PROJECT_KEY }}"
+          echo "Organización: ${{ env.SONAR_ORGANIZATION }}"
+          echo "Dashboard: https://sonarcloud.io/project/overview?id=${{ env.SONAR_PROJECT_KEY }}"
+          echo "========================================"
+
+# -----------------------------------------------------------
+# Job 4: Dependency Review (GitHub nativo) — PARALELO
+# Bloquea PRs con paquetes vulnerables o licencias incompatibles
+# -----------------------------------------------------------
+  dependency-review:
+    needs: setup
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v3
+
+# -----------------------------------------------------------
+# Job 5: Resumen final del pipeline
+# -----------------------------------------------------------
+  summary:
+    needs: [security-scan, testing, sonarcloud, dependency-review]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: pipeline-reports
+
+      - name: Print final pipeline summary
+        run: |
+          echo "========================================"
+          echo "PIPELINE DE SEGURIDAD Y CALIDAD - RESUMEN FINAL"
+          echo "========================================"
+          echo "Jobs ejecutados:"
+          echo "  - setup:          Checkout + dependencias"
+          echo "  - security-scan:  Gitleaks + Semgrep + Trivy"
+          echo "  - testing:        Jest + Supertest (cobertura)"
+          echo "  - sonarcloud:     SonarCloud SAST + Quality Gate"
+          echo "  - dependency-review: Dependency Review (PRs)"
+          echo ""
+          echo "Reportes disponibles en:"
+          echo "  - pipeline-reports/security-reports/"
+          echo "  - pipeline-reports/test-coverage/"
+          echo ""
+          echo "SonarCloud: https://sonarcloud.io/project/overview?id=${{ env.SONAR_PROJECT_KEY }}"
           echo "========================================"
