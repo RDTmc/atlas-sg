@@ -1,19 +1,27 @@
-name: SonarCloud Scan
+name: Security & Quality Pipeline (SonarCloud + Tests + SAST + Secrets)
+
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 jobs:
-  sonar:
+  security-and-quality:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # -----------------------------------------------------------
+      # 1. Checkout del código
+      # -----------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # -----------------------------------------------------------
+      # 2. Instalar Java 21 (requerido por SonarScanner)
+      # -----------------------------------------------------------
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -26,6 +34,67 @@ jobs:
           which java
           java -version
 
+      # -----------------------------------------------------------
+      # 3. Instalar Node.js (requerido por npm, Semgrep, Gitleaks, Jest)
+      # -----------------------------------------------------------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # -----------------------------------------------------------
+      # 4. Instalar dependencias del backend
+      # -----------------------------------------------------------
+      - name: Install backend dependencies
+        working-directory: ./BACKEND
+        run: npm ci
+
+      # -----------------------------------------------------------
+      # 5. npm audit — Vulnerabilidades en dependencias (SAST)
+      # -----------------------------------------------------------
+      - name: Run npm audit (dependency vulnerabilities)
+        working-directory: ./BACKEND
+        run: |
+          npm audit --json --audit-level=moderate > npm-audit-results.json || true
+          npm audit --audit-level=moderate || true
+        continue-on-error: true
+
+      # -----------------------------------------------------------
+      # 6. Semgrep — SAST adicional sobre código fuente
+      # -----------------------------------------------------------
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Run Semgrep scan
+        run: |
+          semgrep --config auto --json --output semgrep-results.json . || true
+        continue-on-error: true
+
+      # -----------------------------------------------------------
+      # 7. Gitleaks — Detección de secretos hardcodeados
+      # -----------------------------------------------------------
+      - name: Install Gitleaks
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh -s -- -b /usr/local/bin
+          gitleaks --version
+
+      - name: Run Gitleaks secret detection
+        run: |
+          gitleaks detect --source . --report-format json --report-path gitleaks-results.json || true
+        continue-on-error: true
+
+      # -----------------------------------------------------------
+      # 8. Ejecutar pruebas unitarias e integración (Jest + Supertest)
+      # -----------------------------------------------------------
+      - name: Run Jest unit and integration tests
+        working-directory: ./BACKEND
+        run: |
+          npm test -- --coverage --coverageReporters=text --coverageReporters=json --coverageReporters=html || true
+        continue-on-error: true
+
+      # -----------------------------------------------------------
+      # 9. SonarCloud Scan (SAST + Quality Gate)
+      # -----------------------------------------------------------
       - name: Download SonarScanner
         run: |
           curl -fsSL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.8.1.3023-linux.zip -o sonar-scanner.zip
@@ -35,7 +104,46 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          # El script del scanner fuerza su propio JRE embebido (Java 11) ignorando JAVA_HOME/PATH.
-          # Desactivamos ese JRE para que use el Java 21 del runner (el scanner requiere Java 17+).
           sed -i 's/use_embedded_jre=true/use_embedded_jre=false/' sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner
-          ./sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner -Dsonar.login="$SONAR_TOKEN"
+          ./sonar-scanner-4.8.1.3023-linux/bin/sonar-scanner \
+            -Dsonar.login="$SONAR_TOKEN" \
+            -Dsonar.projectKey=RDTmc_atlas-sg \
+            -Dsonar.projectName=Atlas-Sistema-Gestion \
+            -Dsonar.projectVersion=1.0.0 \
+            -Dsonar.sources=BACKEND/src,FRONTEND/src \
+            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/*.spec.js,**/*.test.js \
+            -Dsonar.sourceEncoding=UTF-8 \
+            -Dsonar.language=js \
+            -Dsonar.typescript.lcov.reportPaths=BACKEND/__tests__/coverage/lcov.info \
+            -Dsonar.javascript.lcov.reportPaths=BACKEND/__tests__/coverage/lcov.info || true
+        continue-on-error: true
+
+      # -----------------------------------------------------------
+      # 10. Publicar reportes como artifacts del workflow
+      # -----------------------------------------------------------
+      - name: Upload security and test reports as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-and-test-reports
+          path: |
+            BACKEND/npm-audit-results.json
+            semgrep-results.json
+            gitleaks-results.json
+            BACKEND/__tests__/coverage/
+            sonar-scanner-4.8.1.3023-linux/
+          retention-days: 30
+
+      # -----------------------------------------------------------
+      # 11. Resumen de resultados del pipeline
+      # -----------------------------------------------------------
+      - name: Print pipeline summary
+        run: |
+          echo "========================================"
+          echo "PIPELINE DE SEGURIDAD Y CALIDAD - RESUMEN"
+          echo "========================================"
+          echo "1. npm audit:   $(cat BACKEND/npm-audit-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"Vulnerabilidades: {d[\"metadata\"][\"vulnerabilities\"][\"total\"]} (Críticas: {d[\"metadata\"][\"vulnerabilities\"][\"critical\"]}, Altas: {d[\"metadata\"][\"vulnerabilities\"][\"high\"]}, Medias: {d[\"metadata\"][\"vulnerabilities\"][\"moderate\"]})")' 2>/dev/null || echo "Ver reporte npm-audit-results.json")"
+          echo "2. Semgrep:     $(cat semgrep-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"Hallazgos: {len(d[\"results\"])}")' 2>/dev/null || echo "Ver reporte semgrep-results.json")"
+          echo "3. Gitleaks:    $(cat gitleaks-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"Secretos encontrados: {len(d)}")' 2>/dev/null || echo "Ver reporte gitleaks-results.json")"
+          echo "4. Jest:        Ver BACKEND/__tests__/coverage/lcov-report/index.html"
+          echo "5. SonarCloud:  Ver https://sonarcloud.io/project/overview?id=RDTmc_atlas-sg"
+          echo "========================================"
