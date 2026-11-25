@@ -1,0 +1,11 @@
+timeStamp,elapsed,label,responseCode,responseMessage,threadName,dataType,success,failureMessage,bytes,sentBytes,grpThreads,allThreads,URL,Latency,IdleTime,Connect
+1795550545708,55,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-1,text,true,,269,112,10,10,http://localhost:4450/,52,0,24
+1795550545709,54,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-10,text,true,,269,112,10,10,http://localhost:4450/,54,0,23
+1795550545708,55,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-5,text,true,,269,112,10,10,http://localhost:4450/,49,0,24
+1795550545708,55,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-3,text,true,,269,112,10,10,http://localhost:4450/,54,0,24
+1795550545708,55,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-8,text,true,,269,112,10,10,http://localhost:4450/,36,0,24
+1795550545709,54,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-9,text,true,,269,112,10,10,http://localhost:4450/,35,0,23
+1795550545708,55,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-6,text,true,,269,112,10,10,http://localhost:4450/,48,0,24
+1795550545709,54,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-7,text,true,,269,112,10,10,http://localhost:4450/,52,0,23
+1795550545708,55,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-4,text,true,,269,112,10,10,http://localhost:4450/,36,0,24
+1795550545708,55,GET / (Health Check),200,OK,Atlas Carga Constante - 10 usuarios 1-2,text,true,,269,112,10,10,http://localhost:4450/,36,0,24

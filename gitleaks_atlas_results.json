@@ -1,0 +1,23 @@
+[
+ {
+  "RuleID": "generic-api-key",
+  "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+  "StartLine": 30,
+  "EndLine": 30,
+  "StartColumn": 5,
+  "EndColumn": 82,
+  "Match": "JWT_SECRET: `0d1d8132f0fde5beabb417b434ff10f1cae8635a461686b0f46ac9c2bbfbd0e8`",
+  "Secret": "0d1d8132f0fde5beabb417b434ff10f1cae8635a461686b0f46ac9c2bbfbd0e8",
+  "File": "README.md",
+  "SymlinkFile": "",
+  "Commit": "df693b326f0b31cc2e7e21e2f3b2e7b0b91e9b66",
+  "Link": "https://github.com/RDTmc/atlas-sg/blob/df693b326f0b31cc2e7e21e2f3b2e7b0b91e9b66/README.md?plain=1#L30",
+  "Entropy": 3.8203132,
+  "Author": "Rodrigo del Transito Muñoz Catalan",
+  "Email": "rd.munoz@duocuc.cl",
+  "Date": "2026-10-28T14:40:51Z",
+  "Message": "Añadir código Atlas + workflow SonarCloud",
+  "Tags": [],
+  "Fingerprint": "df693b326f0b31cc2e7e21e2f3b2e7b0b91e9b66:README.md:generic-api-key:30"
+ }
+]
