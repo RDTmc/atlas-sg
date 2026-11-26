@@ -70,7 +70,7 @@ export default function Login() {
             <img src={Logo} alt="Logo" width={200} />
           </Box>
           <h2 className="font-bold text-4xl text-center mb-6 text-primary">
-            Iniciar Sesión
+            Iniciar Sesión - Sistema Atlas
           </h2>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
             <div>
