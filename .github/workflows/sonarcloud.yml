@@ -194,7 +194,9 @@ jobs:
             -Dsonar.language=js \
             -Dsonar.typescript.lcov.reportPaths=BACKEND/__tests__/coverage/lcov.info \
             -Dsonar.javascript.lcov.reportPaths=BACKEND/__tests__/coverage/lcov.info \
-            -Dsonar.cfamily.build-wrapper-output=bypass || true
+            -Dsonar.cfamily.build-wrapper-output=bypass \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.timeout=600 || true
         continue-on-error: true
 
       - name: Print SonarCloud summary
