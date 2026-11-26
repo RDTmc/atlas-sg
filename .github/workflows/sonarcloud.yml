@@ -22,7 +22,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Requerido por Gitleaks para revisar historial de commits
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -54,7 +54,7 @@ jobs:
         working-directory: ./BACKEND
         run: npm ci
 
-      # --- Gitleaks: secretos hardcodeados (vía Docker, más confiable) ---
+      # --- Gitleaks: secretos hardcodeados (vía Docker) ---
       - name: Run Gitleaks secret detection (Docker)
         id: gitleaks
         run: |
@@ -74,20 +74,13 @@ jobs:
           echo "findings=$(semgrep --config auto --json . 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d[\"results\"]))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      # --- Trivy: SCA + contenedores + IaC ---
-      - name: Install Trivy
-        run: |
-          apt-get update && apt-get install -y wget apt-transport-https gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/trivy.list
-          apt-get update && apt-get install -y trivy
-          trivy --version
-
-      - name: Run Trivy filesystem scan (dependencias Node.js)
+      # --- Trivy: SCA + contenedores + IaC (vía Docker, sin apt-get) ---
+      - name: Run Trivy filesystem scan (Docker)
         id: trivy
         run: |
-          trivy fs --format json --output trivy-results.json --skip-dirs node_modules . || true
-          echo "vulns=$(cat trivy-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Summary",{}).get("Vulnerabilities",0))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
+          docker run --rm -v "${PWD}:/repo" aquasec/trivy:latest \
+            fs --format json --output /repo/trivy-results.json --skip-dirs node_modules /repo || true
+          echo "vulns=$(cat /repo/trivy-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Summary",{}).get("Vulnerabilities",0))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       # --- Publicar reportes de seguridad ---
