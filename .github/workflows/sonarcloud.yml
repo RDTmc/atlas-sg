@@ -225,7 +225,7 @@ jobs:
   # Job 5: Resumen final del pipeline
   # -----------------------------------------------------------
   summary:
-    needs: [security-scan, testing, sonarcloud, dependency-review]
+    needs: [security-scan, testing, sonarcloud]
     runs-on: ubuntu-latest
     steps:
       - name: Download all reports
