@@ -6,17 +6,14 @@ on:
   pull_request:
     branches: [ main ]
 
-# -----------------------------------------------------------
-# Variables de entorno globales
-# -----------------------------------------------------------
 env:
   SONAR_PROJECT_KEY: RDTmc_atlas-sg
   SONAR_ORGANIZATION: rodrigo-munoz-catalan
 
-# -----------------------------------------------------------
-# Job 0: Checkout + Instalación de dependencias (compartido)
-# -----------------------------------------------------------
 jobs:
+  # -----------------------------------------------------------
+  # Job 0: Checkout + Instalación de dependencias (compartido)
+  # -----------------------------------------------------------
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -36,9 +33,9 @@ jobs:
         working-directory: ./BACKEND
         run: npm ci
 
-# -----------------------------------------------------------
-# Job 1: Seguridad rápida (Gitleaks + Semgrep + Trivy) — PARALELO
-# -----------------------------------------------------------
+  # -----------------------------------------------------------
+  # Job 1: Seguridad rápida (Gitleaks + Semgrep + Trivy) — PARALELO
+  # -----------------------------------------------------------
   security-scan:
     needs: setup
     runs-on: ubuntu-latest
@@ -57,17 +54,13 @@ jobs:
         working-directory: ./BACKEND
         run: npm ci
 
-      # --- Gitleaks: secretos hardcodeados (historial completo) ---
-      - name: Install Gitleaks
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh -s -- -b /usr/local/bin
-          gitleaks --version
-
-      - name: Run Gitleaks secret detection
+      # --- Gitleaks: secretos hardcodeados (vía Docker, más confiable) ---
+      - name: Run Gitleaks secret detection (Docker)
         id: gitleaks
         run: |
-          gitleaks detect --source . --report-format json --report-path gitleaks-results.json || true
-          echo "leaks_found=$(gitleaks detect --source . --report-format json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
+          docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:latest \
+            --source=/repo --report-format json --report-path /repo/gitleaks-results.json || true
+          echo "leaks_found=$(cat /repo/gitleaks-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       # --- Semgrep: SAST rápido ---
@@ -81,7 +74,7 @@ jobs:
           echo "findings=$(semgrep --config auto --json . 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d[\"results\"]))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      # --- Trivy: SCA + contenedores + IaC (reemplaza npm audit) ---
+      # --- Trivy: SCA + contenedores + IaC ---
       - name: Install Trivy
         run: |
           apt-get update && apt-get install -y wget apt-transport-https gnupg lsb-release
@@ -94,7 +87,7 @@ jobs:
         id: trivy
         run: |
           trivy fs --format json --output trivy-results.json --skip-dirs node_modules . || true
-          echo "vulns=$(trivy fs --format json . 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Summary",{}).get("Vulnerabilities",0))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
+          echo "vulns=$(cat trivy-results.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Summary",{}).get("Vulnerabilities",0))' 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       # --- Publicar reportes de seguridad ---
@@ -118,9 +111,9 @@ jobs:
           echo "Trivy vulnerabilidades: ${{ steps.trivy.outputs.vulns }}"
           echo "========================================"
 
-# -----------------------------------------------------------
-# Job 2: Pruebas automatizadas (Jest + Supertest) — PARALELO
-# -----------------------------------------------------------
+  # -----------------------------------------------------------
+  # Job 2: Pruebas automatizadas (Jest + Supertest) — PARALELO
+  # -----------------------------------------------------------
   testing:
     needs: setup
     runs-on: ubuntu-latest
@@ -168,10 +161,10 @@ jobs:
           echo "Reportes: BACKEND/__tests__/coverage/lcov-report/index.html"
           echo "========================================"
 
-# -----------------------------------------------------------
-# Job 3: Calidad y seguridad estática (SonarCloud) — PARALELO
-# Consume cobertura del Job 2 (testing)
-# -----------------------------------------------------------
+  # -----------------------------------------------------------
+  # Job 3: Calidad y seguridad estática (SonarCloud) — PARALELO
+  # Consume cobertura del Job 2 (testing)
+  # -----------------------------------------------------------
   sonarcloud:
     needs: [setup, testing]
     runs-on: ubuntu-latest
@@ -187,7 +180,6 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # --- Usar imagen Docker oficial de SonarScanner (optimización de rendimiento) ---
       - name: Run SonarCloud Scan (Docker official image)
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -222,10 +214,9 @@ jobs:
           echo "Dashboard: https://sonarcloud.io/project/overview?id=${{ env.SONAR_PROJECT_KEY }}"
           echo "========================================"
 
-# -----------------------------------------------------------
-# Job 4: Dependency Review (GitHub nativo) — PARALELO
-# Bloquea PRs con paquetes vulnerables o licencias incompatibles
-# -----------------------------------------------------------
+  # -----------------------------------------------------------
+  # Job 4: Dependency Review (GitHub nativo) — PARALELO
+  # -----------------------------------------------------------
   dependency-review:
     needs: setup
     runs-on: ubuntu-latest
@@ -237,9 +228,9 @@ jobs:
       - name: Dependency Review
         uses: actions/dependency-review-action@v3
 
-# -----------------------------------------------------------
-# Job 5: Resumen final del pipeline
-# -----------------------------------------------------------
+  # -----------------------------------------------------------
+  # Job 5: Resumen final del pipeline
+  # -----------------------------------------------------------
   summary:
     needs: [security-scan, testing, sonarcloud, dependency-review]
     runs-on: ubuntu-latest
@@ -255,10 +246,10 @@ jobs:
           echo "PIPELINE DE SEGURIDAD Y CALIDAD - RESUMEN FINAL"
           echo "========================================"
           echo "Jobs ejecutados:"
-          echo "  - setup:          Checkout + dependencias"
-          echo "  - security-scan:  Gitleaks + Semgrep + Trivy"
-          echo "  - testing:        Jest + Supertest (cobertura)"
-          echo "  - sonarcloud:     SonarCloud SAST + Quality Gate"
+          echo "  - setup:             Checkout + dependencias"
+          echo "  - security-scan:     Gitleaks + Semgrep + Trivy"
+          echo "  - testing:           Jest + Supertest (cobertura)"
+          echo "  - sonarcloud:        SonarCloud SAST + Quality Gate"
           echo "  - dependency-review: Dependency Review (PRs)"
           echo ""
           echo "Reportes disponibles en:"
